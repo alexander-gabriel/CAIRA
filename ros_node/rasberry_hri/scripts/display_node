@@ -1,0 +1,33 @@
+#!/usr/bin/env python
+
+import sys
+import rospy
+from common.parameters import NS
+from rasberry_hri.msg import Classification
+from std_msgs.msg import String
+from json import dumps
+
+klass = "uninitialized"
+picker = "uninitialized"
+
+def new_class(msg):
+    rospy.loginfo(msg.data)
+
+
+def new_action(msg):
+    line = "{:}: {:.2f}  -> ".format(msg.label, msg.error_score)
+    classifications = {}
+    for pose in msg.poses:
+        classifications[pose.label] = pose.error_score
+        line += "{:}: {:.2f},  ".format(pose.label, pose.error_score)
+    tmp = dumps(classifications, separators=(',', ':'))
+    rospy.loginfo(tmp)
+    rospy.loginfo(line)
+
+if __name__ == '__main__':
+    rospy.init_node("label_display")
+    label_subscriber = rospy.Subscriber('{}/action_labels'.format(NS), String, new_class)
+    action_subscriber = rospy.Subscriber('/pose_classification', Classification, new_action)
+    rospy.myargv(argv=sys.argv)
+    rospy.loginfo("REC: Display started")
+    rospy.spin()

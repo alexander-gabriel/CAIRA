@@ -1,0 +1,100 @@
+#!/usr/bin/env python
+
+import sys
+import os
+import time
+import json
+from hashlib import sha256
+
+import roslaunch
+import rospy
+import rosnode
+from experiments.experimenter import Experimenter
+from common.parameters import CONFIG_DIRECTORY, ACTIVE_DIRECTORY, \
+                              LOG_DIRECTORY, STATE_DIRECTORY
+
+
+# x TODO: storage of rosbag action data (start, end, filename, classification)
+# x TODO: keeping track of time (subscribing to the simulation clock, launching events at predefined time steps)
+# x TODO: start rosbag from experimenter
+# x TODO: in worldstate: add trajectory calculus, generate labels for human movement relative to his node location as seen from the robot's perspective
+# x TODO: generate human behavior events from observed movement
+# x TODO: add distance metric and emergency stop
+# x TODO: check reasoning
+# x TODO: check experimenter
+
+# . TODO: check pose detection
+
+# . TODO: add pose for picking berries
+# . TODO: add pose for call
+# . TODO: add pose for cancel
+# . TODO: add pose for stop
+# . TODO: in bdi system: pause, start simulation, change simulation realtime factor
+
+
+# self.behaviours = {120: {"start": None,
+#                     "duration": None,
+#                     "filename": None,
+#                     "label": None,
+#                     "type": "action"},
+#                 240: {"label": None,
+#                     "type": "movement"},
+#                     }
+
+
+
+def make_paths():
+    for path in [
+         os.path.join(CONFIG_DIRECTORY, LOG_DIRECTORY),
+         os.path.join(CONFIG_DIRECTORY, STATE_DIRECTORY),
+         os.path.join(CONFIG_DIRECTORY, ACTIVE_DIRECTORY)]:
+        try:
+            os.makedirs(path)
+        except OSError:
+            if not os.path.isdir(path):
+                raise
+
+
+
+if __name__ == "__main__":
+    rospy.init_node("experiment_node")
+    rospy.myargv(argv=sys.argv)
+    make_paths()
+    while (rospy.get_time() == 0):
+        time.sleep(0.01)
+
+    # run_id = roslaunch.rlutil.get_or_generate_uuid(None, True)
+
+    # opencog = roslaunch.parent.ROSLaunchParent(
+    #     run_id, ["/home/rasberry/catkin_ws/src/rasberry_hri/launch/openpose.launch"], is_core=False
+    # )
+    # opencog.start()
+
+    e = Experimenter()
+    # do 5, 7, and 9 later
+    rospy.loginfo("EXPE: Generating Configurations")
+
+    for subdir, dirs, filenames in os.walk(os.path.join(CONFIG_DIRECTORY,
+                                                        ACTIVE_DIRECTORY)):
+        for filename in filenames:
+            try:
+                filepath = os.path.join(subdir, filename)
+                with open(filepath, "r") as file:
+                    experiment_set = json.load(file)
+                e.add_experiment_set(experiment_set)
+
+                # with open(filepath, "w") as file:
+                #     json.dump(data, file, sort_keys=True, indent=4,
+                #               separators=(',', ': '))
+                # e.add_config(config)
+            except KeyError as err:
+                rospy.logwarn("EXPE: KeyError {}".format(err))
+            except ValueError as err:
+                rospy.logwarn(
+                    "EXPE: Could not load {}".format(filepath))
+                rospy.logwarn("EXPE: ValueError {}".format(err))
+    rospy.loginfo("EXPE: Starting Experimenter")
+    e.run()
+    rospy.loginfo("EXPE: Experiments finished")
+    # rosnode.kill_nodes(["/thorvald_001/action_recognition_node", "/thorvald_001/openpose"])
+    rosnode.kill_nodes(["/thorvald_001/openpose"])

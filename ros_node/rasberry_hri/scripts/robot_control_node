@@ -1,0 +1,7 @@
+#! /usr/bin/python
+import rospy
+from robco.commandExecuter import CommandExecuter
+
+if '__main__' == __name__:
+    rospy.init_node("robot_control")
+    executer = CommandExecuter()

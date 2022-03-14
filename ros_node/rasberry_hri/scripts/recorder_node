@@ -1,0 +1,35 @@
+#!/usr/bin/env python
+
+from json import dumps
+
+import rospy
+from common.utils import ardb
+from common.parameters import NS
+from rasberry_hri.msg import Classification
+from std_msgs.msg import String
+
+klass = "uninitialized"
+picker = "uninitialized"
+
+def new_class(msg):
+    global picker, klass
+    picker, klass = msg.data.split(":")
+    rospy.loginfo(msg.data)
+
+
+def new_action(msg):
+    global picker, klass
+    classifications = {}
+    for pose in msg.poses:
+        classifications[pose.label] = pose.error_score
+    tmp = dumps(classifications, separators=(',', ':'))
+    rospy.loginfo(tmp)
+    ardb.add_classification(rospy.get_time(), picker, klass, tmp)
+
+if __name__ == '__main__':
+    rospy.init_node("recorder")
+    label_subscriber = rospy.Subscriber('{}/action_labels'.format(NS), String, new_class)
+    action_subscriber = rospy.Subscriber('/pose_classification', Classification, new_action)
+    rospy.myargv(argv=sys.argv)
+    rospy.loginfo("REC: Recorder started")
+    rospy.spin()

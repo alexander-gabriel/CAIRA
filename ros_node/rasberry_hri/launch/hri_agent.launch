@@ -1,0 +1,54 @@
+<launch>
+  <arg name="model_folder" default="/home/rasberry/git/openpose/models/"/>
+  <arg name="publish_result" default="False"/>
+  <arg name="_ns" default="/thorvald_001"/>
+  <group>
+        <!-- <include file="$(find rasberry_hri)/launch/d415_camera.launch"/> -->
+        <!-- <include file="$(find realsense2_camera)/launch/rs_camera.launch"/> -->
+
+        <!-- Set to match the cameras that are launched in the include file (camera launch script) -->
+        <!-- <arg name="topic_prefixes" default="rsense"/>--> <!-- Separate topic_prefixes with commas -->
+
+
+        <!-- <node pkg="openpose_ros" name="openpose" type="openpose_ros_node" output="screen">
+          <param name="net_input_width" value="320"/>
+            <param name="net_input_height" value="240"/>
+            <param name="net_output_width" value="320"/>
+            <param name="net_output_height" value="240"/>
+            <param name="model_folder" value="$(arg model_folder)"/>
+            <param name="pose_model" value="BODY_25"/>
+            <param name="publish_result" value="$(arg publish_result)"/>
+            <param name="overlay_alpha" value="0.6"/>
+            <param name="num_scales" value="1"/>
+            <param name="scale_gap" value="0.3"/>
+            <param name="num_gpu_start" value="0"/>
+            <param name="/use_sim_time" value="true"/>
+        </node> -->
+
+        <node pkg="rasberry_hri" name="action_recognition_node" ns="$(arg _ns)" type="action_recognition_node" output="screen">
+            <param name="/use_sim_time" value="true"/>
+        </node>
+
+        <node pkg="rasberry_hri" name="scheduler" type="scheduler_node" ns="$(arg _ns)" output="screen">
+          <param name="/use_sim_time" value="true"/>
+          <!-- <param name="max_cost" type="double" value="240"/>
+          <param name="min_gain" type="double" value="10"/>
+          <param name="target_picker" type="str" value="PickerBLALBA02"/> -->
+          <!-- <param name="called_robot" type="bool" value="False"/> -->
+          <!-- <param name="seen_picking" type="bool" value="False"/> -->
+          <!-- <param name="iterations" type="str" value="10"/>
+          <param name="complexity_penalty" type="double" value="0.1"/>
+          <param name="robot_speed" type="double" value="0.5"/>
+          <param name="mean_waypoint_distance" type="double" value="2.95"/>
+          <param name="move_gain" type="double" value="0"/>
+          <param name="moveto_gain" type="double" value="0"/>
+          <param name="evade_gain" type="double" value="100"/>
+          <param name="give_gain" type="double" value="120"/>
+          <param name="give_cost" type="double" value="2.5"/>
+          <param name="exchange_gain" type="double" value="240"/>
+          <param name="exchange_cost" type="double" value="5"/>
+          <param name="minimum_distance" type="double" value="0.5"/> -->
+        </node>
+
+    </group>
+</launch>

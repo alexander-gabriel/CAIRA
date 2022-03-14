@@ -1,0 +1,46 @@
+<launch>
+  <arg name="model_folder" default="/home/rasberry/git/openpose/models/"/>
+  <arg name="camera" default="/camera/color/image_raw"/>
+  <arg name="publish_result" default="true"/>
+  <arg name="start_in_polytunnel" default="True"/>
+  <arg name="human_proximity_syncronization" default="False"/>
+  <arg name="launch_manager" default="true"/>
+  <arg name="map2" default="riseholme"/>
+  <arg name="topological_navigation_retries" default="3"/>
+  <arg name="move_base_reconf_service" default="DWAPlannerROS" />
+  <arg name="reconfigure_edges" default="true" />
+
+
+  <group ns="$(arg robot_name)">
+        <!-- <include file="$(find rasberry_hri)/launch/d415_camera.launch"/> -->
+        <!-- <include file="$(find realsense2_camera)/launch/rs_camera.launch"/> -->
+
+        <!-- Set to match the cameras that are launched in the include file (camera launch script) -->
+        <!-- <arg name="topic_prefixes" default="rsense"/>--> <!-- Separate topic_prefixes with commas -->
+
+        <!-- <node pkg="openpose_ros" name="openpose" type="openpose_ros_node" output="screen">
+          <param name="net_input_width" value="352"/>
+            <param name="net_input_height" value="208"/>
+            <param name="net_output_width" value="1080"/>
+            <param name="net_output_height" value="720"/>
+            <param name="model_folder" value="$(arg model_folder)"/>
+            <param name="pose_model" value="BODY_25"/>
+            <param name="publish_result" value="$(arg publish_result)"/>
+            <param name="overlay_alpha" value="0.6"/>
+        </node> -->
+
+        <node pkg="rasberry_hri" name="action_recognition" type="action_recognition_node" output="screen">
+          <param name="camera" value="$(arg camera)"/>
+        </node>
+
+
+        <node pkg="rasberry_hri" name="robot_control" type="robot_control_node" >
+          <param name="start_in_polytunnel" type="bool" value="$(arg start_in_polytunnel)"/>
+          <param name="human_proximity_syncronization" type="bool" value="$(arg human_proximity_syncronization)"/>
+        </node>
+
+
+        <node pkg="rasberry_hri" name="scheduler" type="scheduler_node" output="screen">
+        </node>
+    </group>
+</launch>

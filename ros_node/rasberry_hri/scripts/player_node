@@ -1,0 +1,134 @@
+#!/usr/bin/env python
+
+import sys
+import os
+from math import sin, cos, pi, sqrt
+from threading import Thread
+from time import sleep
+from collections import deque
+
+import numpy as np
+
+import rospy
+import rosbag
+from geometry_msgs.msg import Pose
+from marvelmind_nav.msg import hedge_pos_a
+from rasberry_hri.msg import Action
+from std_msgs.msg import String
+
+from common.parameters import NS, PICKER_LENGTH, ROBOT_LENGTH, \
+    INITIAL_PICKER_POSITION, INITIAL_PICKER_ORIENTATION, \
+    PICKER_DISTANCE_PREFERENCE, PICKER_WIDTH, ROBOT_WIDTH, TARGET_PICKER, \
+    PICKER_UPDATE_FREQUENCY, PICKER_SPEED, EXCHANGE_COST, \
+    GIVE_COST, PICKERS, ROBOT_MODES, USE_ACTION_RECOGNITION, \
+    MOVEMENT_NOISE, ADD_MOVEMENT_NOISE
+from common.utils import db
+
+ROSBAG_FREQUENCY = 25  # Hz
+
+
+def get_rosbag_from_file(filename, mode="r"):
+    try:
+        bag = rosbag.Bag(filename, mode)
+        return bag
+    except Exception as e:
+        rospy.logerr(
+         "Failed to get rosbag topics info from file {:} with exception: '{:}'"
+         .format(filename, e)
+        )
+        return None
+
+
+class Player(object):
+    def __init__(self, running_bags, filename, topics=[], start_delay=None, duration=None):
+        # super(Player, self).__init__()
+        self.running_bags = running_bags
+        loading_start = rospy.get_time()
+        self.rate = rospy.Rate(ROSBAG_FREQUENCY)
+        self.closing = False
+        self.filename = filename
+        self.bag = get_rosbag_from_file(filename)
+        start_delay = 0
+        bag_start_time = rospy.Time.from_sec(self.bag.get_start_time())
+        bag_end_time = rospy.Time.from_sec(self.bag.get_end_time())
+        start_time = (bag_start_time if start_delay is None else bag_start_time + rospy.Duration(start_delay))
+        end_time = (bag_end_time if duration is None else start_time + rospy.Duration(duration))
+        self.msgs = self.bag.read_messages(topics=topics, start_time=start_time, end_time=end_time)
+        self.pubs = {}
+        rospy.loginfo("PMO: Loading rosbag '{}' took {:.2f}".format(self.filename, rospy.get_time() - loading_start))
+
+    def run(self):
+        try:
+            self.running_bags.append(self)
+            if not self.closing:
+                rospy.loginfo("PMO: Playing rosbag '{}'".format(self.filename))
+                count_sent = 0
+                count_encountered = 0
+                for topic, msg, timestamp in self.msgs:
+                    if self.closing:
+                        break
+                    count_encountered += 1
+                    if topic not in self.pubs:
+                        self.pubs[topic] = rospy.Publisher(
+                            topic, msg.__class__, queue_size=10
+                        )
+                        rospy.sleep(0.05)
+                    count_sent += 1
+                    self.pubs[topic].publish(msg)
+                    self.rate.sleep()
+                rospy.loginfo("PMO: Stopped playing rosbag {}. Sent {} of {} messages.".format(self.filename, count_sent, count_encountered))
+        except AttributeError:
+            rospy.loginfo("PMO: Attribute error")
+        except rospy.ROSInterruptException:
+            rospy.loginfo("PMO: Remote interrupt")
+        except rospy.ROSException:
+            rospy.loginfo("PMO: trying to publish to closed topic")
+        finally:
+            self.close()
+            # rospy.core.signal_shutdown('remote interrupt')
+
+    def start(self):
+        while not self.closing:
+            self.run()
+
+    def close(self):
+        if not self.closing:
+            self.running_bags.remove(self)
+            self.closing = True
+            self.bag.close()
+
+    def terminate(self):
+        # self.bag.close()
+        # rospy.sleep(1)
+        # if self.bag.poll() is None:
+        #     self.bag.kill()
+        try:
+            self.close()
+        except IOError:
+            pass
+
+if __name__ == '__main__':
+    rospy.init_node("player")
+    label_publisher = rospy.Publisher('{}/action_labels'.format(
+                                            NS), String, queue_size=10)
+    label_publisher.publish("dummy:message")
+    rospy.myargv(argv=sys.argv)
+    while (rospy.get_time() == 0):
+        sleep(0.01)
+    rospy.loginfo("PLA: Player started")
+    running_bags = []
+    for root, dirs, files in os.walk("/data/out-video"):
+        for dir in dirs:
+            for subroot, subdirs, subfiles in os.walk(os.path.join(root, dir)):
+                for file in subfiles:
+                    label = dir + ":"+ file[:-4]
+                    label_publisher.publish(label)
+                    rospy.sleep(1)
+                    while running_bags:
+                        rospy.sleep(1)
+                    try:
+                        player = Player(running_bags, os.path.join(subroot, file),
+                               topics=["/camera/color/image_raw"])
+                        player.start()
+                    except rosbag.bag.ROSBagException as err:
+                        pass

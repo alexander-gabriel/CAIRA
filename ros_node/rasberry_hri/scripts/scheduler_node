@@ -1,0 +1,31 @@
+#! /usr/bin/python2
+
+import sys
+from time import sleep
+
+import rospy
+import actionlib
+from topological_navigation.msg import GotoNodeAction
+
+from bdi.knowledge_base import *
+from bdi.scheduler import Scheduler
+
+
+if __name__ == '__main__':
+    rospy.init_node("scheduler")
+    while (rospy.get_time() == 0):
+        sleep(0.01)
+    from common.parameters import ME, NS  # doesn't work before init_node
+    robot_id = ME
+    if robot_id == "":
+        robot_id = "thorvald_002"
+    scheduler = Scheduler(robot_id)
+    wait_time = rospy.get_param("{}/start_time".format(NS), None)
+    while wait_time is None:
+        rospy.sleep(0.25)
+        wait_time = rospy.get_param("{}/start_time".format(NS), None)
+    rospy.loginfo("SCH: Experiment starting at: {}".format(wait_time))
+    while rospy.get_time() < wait_time:
+        rospy.sleep(0.25)
+    rospy.loginfo("SCH: Starting Scheduler")
+    scheduler.spin()

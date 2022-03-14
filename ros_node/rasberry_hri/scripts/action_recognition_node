@@ -1,0 +1,31 @@
+#!/usr/bin/env python
+import os
+import sys
+from time import sleep
+
+import rospy
+
+
+from common.parameters import CONFIG_DIRECTORY, ACTIVE_DIRECTORY, \
+                              LOG_DIRECTORY, STATE_DIRECTORY
+
+def make_paths():
+    for path in [
+         os.path.join(CONFIG_DIRECTORY, LOG_DIRECTORY),
+         os.path.join(CONFIG_DIRECTORY, STATE_DIRECTORY),
+         os.path.join(CONFIG_DIRECTORY, ACTIVE_DIRECTORY)]:
+        try:
+            os.makedirs(path)
+        except OSError:
+            if not os.path.isdir(path):
+                raise
+
+if __name__ == '__main__':
+    rospy.myargv(argv=sys.argv)
+    rospy.init_node('action_recognition_node', anonymous=False)
+    make_paths()
+    while (rospy.get_time() == 0):
+        sleep(0.01)
+    from skeleton_pipeline.action_recognition import ActionRecognition
+    ar = ActionRecognition()
+    ar.run()

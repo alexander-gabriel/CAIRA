@@ -1,0 +1,23 @@
+<launch>
+  <arg name="robot_speed" default="0.5"/>
+  <arg name="mean_waypoint_distance" default="2.95"/>
+  <arg name="_ns" default="/thorvald_001"/>
+  <group>
+        <!-- <include file="$(find rasberry_hri)/launch/d415_camera.launch"/> -->
+        <!-- <include file="$(find realsense2_camera)/launch/rs_camera.launch"/> -->
+
+        <!-- Set to match the cameras that are launched in the include file (camera launch script) -->
+        <!-- <arg name="topic_prefixes" default="rsense"/>--> <!-- Separate topic_prefixes with commas -->
+
+        <node pkg="rasberry_hri" name="picker_mover" type="picker_mover_node" ns="$(arg _ns)" output="screen">
+          <param name="/use_sim_time" value="true"/>
+          <!-- <param name="robot_speed" type="double" value="$(arg robot_speed)"/>
+          <param name="picker_speed" type="double" value="1.3"/>
+          <param name="exchange_cost" type="double" value="5"/>
+          <param name="give_cost" type="double" value="2.5"/>
+
+          <param name="mean_waypoint_distance" type="double" value="$(arg mean_waypoint_distance)"/> -->
+        </node>
+
+    </group>
+</launch>

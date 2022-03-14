@@ -1,0 +1,1864 @@
+#!/usr/bin/env python
+
+import sys
+import os
+from math import sin, cos, pi, sqrt
+from threading import Thread
+from time import sleep
+from collections import deque
+
+import numpy as np
+
+import rospy
+import rosbag
+from geometry_msgs.msg import Pose
+from marvelmind_nav.msg import hedge_pos_a
+from rasberry_hri.msg import Action
+
+from common.parameters import NS, PICKER_LENGTH, ROBOT_LENGTH, \
+    INITIAL_PICKER_POSITION, INITIAL_PICKER_ORIENTATION, \
+    PICKER_DISTANCE_PREFERENCE, PICKER_WIDTH, ROBOT_WIDTH, TARGET_PICKER, \
+    PICKER_UPDATE_FREQUENCY, PICKER_SPEED, EXCHANGE_COST, \
+    GIVE_COST, PICKERS, ROBOT_MODES, USE_ACTION_RECOGNITION, \
+    MOVEMENT_NOISE, ADD_MOVEMENT_NOISE
+from common.utils import db
+
+ROSBAG_FREQUENCY = 20  # Hz
+
+MEAN_WAYPOINT_DISTANCE = rospy.get_param(
+    "{}/mean_waypoint_distance".format(NS), 2.95)  # m
+
+PICKER_ID = int(TARGET_PICKER[-2:])
+
+EVADE_DISTANCE = 2 * MEAN_WAYPOINT_DISTANCE  # m
+EVADE_COUNTS = int(EVADE_DISTANCE / PICKER_SPEED * PICKER_UPDATE_FREQUENCY)
+
+DELIVER_DISTANCE = 1 * MEAN_WAYPOINT_DISTANCE  # m
+DELIVER_COUNTS = int(DELIVER_DISTANCE / PICKER_SPEED * PICKER_UPDATE_FREQUENCY)
+
+EXCHANGE_DISTANCE = 1 * MEAN_WAYPOINT_DISTANCE  # m
+EXCHANGE_COUNTS = int(
+    EXCHANGE_DISTANCE / PICKER_SPEED * PICKER_UPDATE_FREQUENCY)
+EXCHANGE_WAIT_COUNTS = (rospy.get_param("{}/exchange_cost".format(NS), 5)
+                        * PICKER_UPDATE_FREQUENCY)
+DELIVER_WAIT_COUNTS = (rospy.get_param("{}/give_cost".format(NS), 5)
+                       * PICKER_UPDATE_FREQUENCY)
+
+
+ANGLE = 1.4224423953586  # 90.0  # angle between direction of travel and X coordinate
+X_DISTANCE = cos(ANGLE) * PICKER_SPEED / PICKER_UPDATE_FREQUENCY
+Y_DISTANCE = -sin(ANGLE) * PICKER_SPEED / PICKER_UPDATE_FREQUENCY
+
+
+# 102: 8.675 4.65
+# 103: 11.649 4.64
+# 104: 14.12 4.612
+# 105: 17.061 4.609 ,_ was this
+# 106: 19.997 4.568
+# 133: 5.53 4.62
+
+# class Time(rospy.Time):
+#
+#     def __init__(self, secs=0, nsecs=0):
+#         super(Time, self).__init__(secs=secs, nsecs=nsecs)
+#
+#     def __add__(self, other):
+#         transfer, nsecs= divmod(self.nsecs+other.nsecs, 1000000000)
+#         return Time(secs=self.secs+other.secs+transfer, nsecs=nsecs)
+
+
+data = {
+    "approach with crate": {
+        1: {
+            "standing": (
+                "/subject-1/walk_towards_crate-54",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-1-moving/walk_towards_crate-53",
+                2,
+                5,
+            ),
+        },
+        2: {
+            "standing": (
+                "/subject-2/walk_towards_crate-27",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-2-moving/walk_towards_crate-28",
+                2,
+                5,
+            ),
+        },
+        3: {
+            "standing": (
+                "/subject-3/walk_towards_crate-30",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-3-moving/walk_towards_crate-43",
+                2,
+                5,
+            ),
+        },
+        4: {
+            "standing": (
+                "/subject-4/walk_towards_crate-34",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-4-moving/walk_towards_crate-47",
+                2,
+                5,
+            ),
+        },
+        5: {
+            "standing": (
+                "/subject-5/walk_towards_crate-28",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-5-moving/walk_towards_crate-132",
+                2,
+                5,
+            ),
+        },
+        6: {
+            "standing": (
+                "/subject-6/walk_towards_crate-37",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-6-moving/walk_towards_crate-35",
+                2,
+                5,
+            ),
+        },
+        7: {
+            "standing": (
+                "/subject-7/walk_towards_crate-28",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-7-moving/walk_towards_crate-67",
+                2,
+                5,
+            ),
+        },
+        8: {
+            "standing": (
+                "/subject-8/walk_towards_crate-30",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-8-moving/walk_towards_crate-44",
+                2,
+                5,
+            ),
+        },
+        9: {
+            "standing": (
+                "/subject-9/walk_towards_crate-54",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-9-moving/walk_towards_crate-69",
+                2,
+                5,
+            ),
+        },
+        10: {
+            "standing": (
+                "/subject-10/walk_towards_crate-30",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-10-moving/walk_towards_crate-41",
+                2,
+                5,
+            ),
+        },
+    },
+    "approach without crate": {
+        1: {
+            "standing": (
+                "/subject-1/walk_towards-18",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-1-moving/walk_towards-25",
+                2,
+                5,
+            ),
+        },
+        2: {
+            "standing": (
+                "/subject-2/walk_towards-1",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-2-moving/walk_towards-2",
+                2,
+                5,
+            ),
+        },
+        3: {
+            "standing": (
+                "/subject-3/walk_towards-1",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-3-moving/walk_towards-11",
+                2,
+                5,
+            ),
+        },
+        4: {
+            "standing": (
+                "/subject-4/walk_towards-3",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-4-moving/walk_towards-9",
+                2,
+                5,
+            ),
+        },
+        5: {
+            "standing": (
+                "/subject-5/walk_towards-1",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-5-moving/walk_towards-10",
+                2,
+                5,
+            ),
+        },
+        6: {
+            "standing": (
+                "/subject-6/walk_towards-1",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-6-moving/walk_towards-2",
+                2,
+                5,
+            ),
+        },
+        7: {
+            "standing": (
+                "/subject-7/walk_towards-2",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-7-moving/walk_towards-36",
+                2,
+                5,
+            ),
+        },
+        8: {
+            "standing": (
+                "/subject-8/walk_towards-2",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-8-moving/walk_towards-9",
+                2,
+                5,
+            ),
+        },
+        9: {
+            "standing": (
+                "/subject-9/walk_towards-0",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-9-moving/walk_towards-11",
+                2,
+                5,
+            ),
+        },
+        10: {
+            "standing": (
+                "/subject-10/walk_towards-0",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-10-moving/walk_towards-5",
+                2,
+                5,
+            ),
+        },
+    },
+    "leave with crate": {
+        1: {
+            "standing": (
+                "/subject-1/walk_away_crate-26",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-1-moving/walk_away_crate-32",
+                2,
+                5,
+            ),
+        },
+        2: {
+            "standing": (
+                "/subject-2/walk_away_crate-9",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-2-moving/walk_away_crate-7",
+                2,
+                5,
+            ),
+        },
+        3: {
+            "standing": (
+                "/subject-3/walk_away_crate-8",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-3-moving/walk_away_crate-19",
+                2,
+                5,
+            ),
+        },
+        4: {
+            "standing": (
+                "/subject-4/walk_away_crate-10",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-4-moving/walk_away_crate-17",
+                2,
+                5,
+            ),
+        },
+        5: {
+            "standing": (
+                "/subject-5/walk_away_crate-8",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-5-moving/walk_away_crate-18",
+                2,
+                5,
+            ),
+        },
+        6: {
+            "standing": (
+                "/subject-6/walk_away_crate-9",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-6-moving/walk_away_crate-11",
+                2,
+                5,
+            ),
+        },
+        7: {
+            "standing": (
+                "/subject-7/walk_away_crate-9",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-7-moving/walk_away_crate-43",
+                2,
+                5,
+            ),
+        },
+        8: {
+            "standing": (
+                "/subject-8/walk_away_crate-9",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-8-moving/walk_away_crate-19",
+                2,
+                5,
+            ),
+        },
+        9: {
+            "standing": (
+                "/subject-9/walk_away_crate-11",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-9-moving/walk_away_crate-27",
+                2,
+                5,
+            ),
+        },
+        10: {
+            "standing": (
+                "/subject-10/walk_away_crate-8",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-10-moving/walk_away_crate-17",
+                2,
+                5,
+            ),
+        },
+    },
+    "leave without crate": {
+        1: {
+            "standing": (
+                "/subject-1/walk_away-62",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-1-moving/walk_away-60",
+                2,
+                5,
+            ),
+        },
+        2: {
+            "standing": (
+                "/subject-1/walk_away-62",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-2-moving/walk_away-35",
+                2,
+                5,
+            ),
+        },
+        3: {
+            "standing": (
+                "/subject-3/walk_away-37",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-3-moving/walk_away-52",
+                2,
+                5,
+            ),
+        },
+        4: {
+            "standing": (
+                "/subject-4/walk_away-43",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-4-moving/walk_away-55",
+                2,
+                5,
+            ),
+        },
+        5: {
+            "standing": (
+                "/subject-5/walk_away-36",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-5-moving/walk_away-145",
+                2,
+                5,
+            ),
+        },
+        6: {
+            "standing": (
+                "/subject-6/walk_away-46",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-6-moving/walk_away-42",
+                2,
+                5,
+            ),
+        },
+        7: {
+            "standing": (
+                "/subject-7/walk_away-36",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-7-moving/walk_away-76",
+                2,
+                5,
+            ),
+        },
+        8: {
+            "standing": (
+                "/subject-8/walk_away-38",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-8-moving/walk_away-57",
+                2,
+                5,
+            ),
+        },
+        9: {
+            "standing": (
+                "/subject-9/walk_away-65",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-9-moving/walk_away-79",
+                2,
+                5,
+            ),
+        },
+        10: {
+            "standing": (
+                "/subject-10/walk_away-40",
+                2,
+                5,
+            ),
+            "moving": (
+                "/subject-10-moving/walk_away-51",
+                2,
+                5,
+            ),
+        },
+    },
+    "pick berries": {
+        1: {
+            "standing": (
+                "/subject-1/picking_berries-34",
+                1,
+                3,
+            ),
+            "moving": (
+                "/subject-1-moving/picking_berries-39",
+                5,
+                3,
+            ),
+        },
+        2: {
+            "standing": (
+                "/subject-2/picking_berries-14",
+                1,
+                3,
+            ),
+            "moving": (
+                "/subject-2-moving/picking_berries-10",
+                1,
+                3,
+            ),
+        },
+        3: {
+            "standing": (
+                "/subject-3/picking_berries-16",
+                5,
+                3,
+            ),
+            "moving": (
+                "/subject-3-moving/picking_berries-24",
+                1,
+                3,
+            ),
+        },
+        4: {
+            "standing": (
+                "/subject-4/picking_berries-20",
+                1,
+                3,
+            ),
+            "moving": (
+                "/subject-4-moving/picking_berries-25",
+                1,
+                3,
+            ),
+        },
+        5: {
+            "standing": (
+                "/subject-5/picking_berries-15",
+                1,
+                3,
+            ),
+            "moving": (
+                "/subject-5-moving/picking_berries-23",
+                1,
+                3,
+            ),
+        },
+        6: {
+            "standing": (
+                "/subject-6/picking_berries-17",
+                1,
+                3,
+            ),
+            "moving": (
+                "/subject-6-moving/picking_berries-17",
+                3,
+                3,
+            ),
+        },
+        7: {
+            "standing": (
+                "/subject-7/picking_berries-17",
+                1,
+                3,
+            ),
+            "moving": (
+                "/subject-7-moving/picking_berries-49",
+                1,
+                3,
+            ),
+        },
+        8: {
+            "standing": (
+                "/subject-8/picking_berries-16",
+                1,
+                3,
+            ),
+            "moving": (
+                "/subject-8-moving/picking_berries-24",
+                3,
+                3,
+            ),
+        },
+        9: {
+            "standing": (
+                "/subject-9/picking_berries-22",
+                3,
+                3,
+            ),
+            "moving": (
+                "/subject-9-moving/picking_berries-32",
+                9,
+                3,
+            ),
+        },
+        10: {
+            "standing": (
+                "/subject-10/picking_berries-18",
+                2,
+                3,
+            ),
+            "moving": (
+                "/subject-10-moving/picking_berries-23",
+                1,
+                3,
+            ),
+        },
+    },
+    "call robot": {
+        1: {
+            "standing": (
+                "/subject-1/gesture_call-75",
+                0,
+                2,
+            ),
+            "moving": (
+                "/subject-1-moving/gesture_call-116",
+                3,
+                2,
+            ),
+        },
+        2: {
+            "standing": (
+                "/subject-1/gesture_call-92",
+                1,
+                2,
+            ),
+            "moving": (
+                "/subject-2-moving/gesture_call-123",
+                1,
+                2,
+            ),
+        },
+        3: {
+            "standing": (
+                "/subject-3/gesture_call-50",
+                0,
+                2,
+            ),
+            "moving": (
+                "/subject-1-moving/gesture_call-116",
+                3,
+                2,
+            ),
+        },
+        4: {
+            "standing": (
+                "/subject-4/gesture_call-57",
+                1,
+                2,
+            ),
+            "moving": (
+                "/subject-4-moving/gesture_call-116",
+                1,
+                2,
+            ),
+        },
+        5: {
+            "standing": (
+                "/subject-5/gesture_call-50",
+                1,
+                2,
+            ),
+            "moving": (
+                "/subject-5-moving/gesture_call-190",
+                6,
+                2,
+            ),
+        },
+        6: {
+            "standing": (
+                "/subject-6/gesture_call-56",
+                1,
+                2,
+            ),
+            "moving": (
+                "/subject-6-moving/gesture_call-110",
+                1,
+                2,
+            ),
+        },
+        7: {
+            "standing": (
+                "/subject-7/gesture_call-48",
+                1,
+                2,
+            ),
+            "moving": (
+                "/subject-7-moving/gesture_call-123",
+                5,
+                2,
+            ),
+        },
+        8: {
+            "standing": (
+                "/subject-8/gesture_call-53",
+                1,
+                2,
+            ),
+            "moving": (
+                "/subject-8-moving/gesture_call-92",
+                1,
+                2,
+            ),
+        },
+        9: {
+            "standing": (
+                "/subject-9/gesture_call-99",
+                1,
+                2,
+            ),
+            "moving": (
+                "/subject-9-moving/gesture_call-156",
+                1,
+                2,
+            ),
+        },
+        10: {
+            "standing": (
+                "/subject-10/gesture_call-52",
+                1,
+                2,
+            ),
+            "moving": (
+                "/subject-10-moving/gesture_call-126",
+                1,
+                2,
+            ),
+        },
+    },
+    "pickup crate": {
+        1: {
+            "standing": (
+                "/subject-1/pickup_crate-49",
+                0,
+                2,
+            ),
+            "moving": (
+                "/subject-1-moving/pickup_crate-50",
+                0,
+                2,
+            ),
+        },
+        2: {
+            "standing": (
+                "/subject-2/pickup_crate-25",
+                0,
+                2,
+            ),
+            "moving": (
+                "/subject-2-moving/pickup_crate-23",
+                0,
+                2,
+            ),
+        },
+        3: {
+            "standing": (
+                "/subject-3/pickup_crate-27",
+                0,
+                2,
+            ),
+            "moving": (
+                "/subject-3-moving/pickup_crate-36",
+                0,
+                2,
+            ),
+        },
+        4: {
+            "standing": (
+                "/subject-4/pickup_crate-32",
+                0,
+                2,
+            ),
+            "moving": (
+                "/subject-4-moving/pickup_crate-38",
+                0,
+                2,
+            ),
+        },
+        5: {
+            "standing": (
+                "/subject-5/pickup_crate-26",
+                0,
+                2,
+            ),
+            "moving": (
+                "/subject-5-moving/pickup_crate-127",
+                0,
+                2,
+            ),
+        },
+        6: {
+            "standing": (
+                "/subject-6/pickup_crate-34",
+                0,
+                2,
+            ),
+            "moving": (
+                "/subject-6-moving/pickup_crate-29",
+                0,
+                2,
+            ),
+        },
+        7: {
+            "standing": (
+                "/subject-7/pickup_crate-24",
+                0,
+                2,
+            ),
+            "moving": (
+                "/subject-7-moving/pickup_crate-63",
+                0,
+                2,
+            ),
+        },
+        8: {
+            "standing": (
+                "/subject-8/pickup_crate-26",
+                0,
+                2,
+            ),
+            "moving": (
+                "/subject-8-moving/pickup_crate-36",
+                0,
+                2,
+            ),
+        },
+        9: {
+            "standing": (
+                "/subject-9/pickup_crate-48",
+                0,
+                2,
+            ),
+            "moving": (
+                "/subject-9-moving/pickup_crate-66",
+                0,
+                2,
+            ),
+        },
+        10: {
+            "standing": (
+                "/subject-10/pickup_crate-27",
+                0,
+                2,
+            ),
+            "moving": (
+                "/subject-10-moving/pickup_crate-38",
+                0,
+                2,
+            ),
+        },
+    },
+    "deposit crate": {
+        1: {
+            "standing": (
+                "/subject-1/deposit_crate-31",
+                0,
+                2,
+            ),
+            "moving": (
+                "/subject-1-moving/deposit_crate-35",
+                0,
+                2,
+            ),
+        },
+        2: {
+            "standing": (
+                "/subject-2/deposit_crate-13",
+                0,
+                2,
+            ),
+            "moving": (
+                "/subject-2-moving/deposit_crate-9",
+                0,
+                2,
+            ),
+        },
+        3: {
+            "standing": (
+                "/subject-3/deposit_crate-13",
+                0,
+                2,
+            ),
+            "moving": (
+                "/subject-3-moving/deposit_crate-22",
+                0,
+                2,
+            ),
+        },
+        4: {
+            "standing": (
+                "/subject-4/deposit_crate-14",
+                0,
+                2,
+            ),
+            "moving": (
+                "/subject-4-moving/deposit_crate-20",
+                0,
+                2,
+            ),
+        },
+        5: {
+            "standing": (
+                "/subject-5/deposit_crate-13",
+                0,
+                2,
+            ),
+            "moving": (
+                "/subject-5-moving/deposit_crate-21",
+                0,
+                2,
+            ),
+        },
+        6: {
+            "standing": (
+                "/subject-6/deposit_crate-14",
+                0,
+                2,
+            ),
+            "moving": (
+                "/subject-6-moving/deposit_crate-15",
+                0,
+                2,
+            ),
+        },
+        7: {
+            "standing": (
+                "/subject-7/deposit_crate-15",
+                0,
+                2,
+            ),
+            "moving": (
+                "/subject-7-moving/deposit_crate-47",
+                0,
+                2,
+            ),
+        },
+        8: {
+            "standing": (
+                "/subject-8/deposit_crate-13",
+                0,
+                2,
+            ),
+            "moving": (
+                "/subject-8-moving/deposit_crate-21",
+                0,
+                2,
+            ),
+        },
+        9: {
+            "standing": (
+                "/subject-9/deposit_crate-18",
+                0,
+                2,
+            ),
+            "moving": (
+                "/subject-9-moving/deposit_crate-29",
+                0,
+                2,
+            ),
+        },
+        10: {
+            "standing": (
+                "/subject-10/deposit_crate-14",
+                0,
+                2,
+            ),
+            "moving": (
+                "/subject-10-moving/deposit_crate-20",
+                0,
+                2,
+            ),
+        },
+    },
+    "get crate": {
+        1: {
+            "standing": (
+                "/subject-1/deliver_crate-23",
+                1,
+                3,
+            ),
+            "moving": (
+                "/subject-1-moving/deliver_crate-30",
+                1,
+                3,
+            ),
+        },
+        2: {
+            "standing": (
+                "/subject-2/deliver_crate-6",
+                2,
+                3,
+            ),
+            "moving": (
+                "/subject-2-moving/deliver_crate-4",
+                1,
+                3,
+            ),
+        },
+        3: {
+            "standing": (
+                "/subject-3/deliver_crate-5",
+                1,
+                3,
+            ),
+            "moving": (
+                "/subject-3-moving/deliver_crate-16",
+                1,
+                3,
+            ),
+        },
+        4: {
+            "standing": (
+                "/subject-4/deliver_crate-8",
+                1,
+                3,
+            ),
+            "moving": (
+                "/subject-4-moving/deliver_crate-13",
+                1,
+                3,
+            ),
+        },
+        5: {
+            "standing": (
+                "/subject-5/deliver_crate-6",
+                1,
+                3,
+            ),
+            "moving": (
+                "/subject-5-moving/deliver_crate-13",
+                1,
+                3,
+            ),
+        },
+        6: {
+            "standing": (
+                "/subject-6/deliver_crate-6",
+                1,
+                3,
+            ),
+            "moving": (
+                "/subject-6-moving/deliver_crate-6",
+                1,
+                3,
+            ),
+        },
+        7: {
+            "standing": (
+                "/subject-7/deliver_crate-7",
+                1,
+                3,
+            ),
+            "moving": (
+                "/subject-7-moving/deliver_crate-40",
+                1,
+                3,
+            ),
+        },
+        8: {
+            "standing": (
+                "/subject-8/deliver_crate-6",
+                1,
+                3,
+            ),
+            "moving": (
+                "/subject-8-moving/deliver_crate-15",
+                1,
+                3,
+            ),
+        },
+        9: {
+            "standing": (
+                "/subject-9/deliver_crate-7",
+                1,
+                3,
+            ),
+            "moving": (
+                "/subject-9-moving/deliver_crate-19",
+                1,
+                3,
+            ),
+        },
+        10: {
+            "standing": (
+                "/subject-10/deliver_crate-6",
+                1,
+                3,
+            ),
+            "moving": (
+                "/subject-10-moving/deliver_crate-11",
+                1,
+                3,
+            ),
+        },
+    },
+    "return crate": {
+        1: {
+            "standing": (
+                "/subject-1/return_crate-59",
+                0,
+                3,
+            ),
+            "moving": (
+                "/subject-1-moving/return_crate-56",
+                0,
+                3,
+            ),
+        },
+        2: {
+            "standing": (
+                "/subject-2/return_crate-32",
+                0,
+                3,
+            ),
+            "moving": (
+                "/subject-2-moving/return_crate-31",
+                0,
+                3,
+            ),
+        },
+        3: {
+            "standing": (
+                "/subject-3/return_crate-35",
+                0,
+                3,
+            ),
+            "moving": (
+                "/subject-3-moving/return_crate-47",
+                0,
+                3,
+            ),
+        },
+        4: {
+            "standing": (
+                "/subject-4/return_crate-38",
+                0,
+                3,
+            ),
+            "moving": (
+                "/subject-4-moving/return_crate-51",
+                0,
+                3,
+            ),
+        },
+        5: {
+            "standing": (
+                "/subject-5/return_crate-31",
+                0,
+                3,
+            ),
+            "moving": (
+                "/subject-5-moving/return_crate-140",
+                0,
+                3,
+            ),
+        },
+        6: {
+            "standing": (
+                "/subject-6/return_crate-43",
+                0,
+                3,
+            ),
+            "moving": (
+                "/subject-6-moving/return_crate-38",
+                0,
+                3,
+            ),
+        },
+        7: {
+            "standing": (
+                "/subject-7/return_crate-33",
+                0,
+                3,
+            ),
+            "moving": (
+                "/subject-7-moving/return_crate-72",
+                0,
+                3,
+            ),
+        },
+        8: {
+            "standing": (
+                "/subject-8/return_crate-34",
+                0,
+                3,
+            ),
+            "moving": (
+                "/subject-8-moving/return_crate-50",
+                0,
+                3,
+            ),
+        },
+        9: {
+            "standing": (
+                "/subject-9/return_crate-60",
+                0,
+                3,
+            ),
+            "moving": (
+                "/subject-9-moving/return_crate-73",
+                0,
+                3,
+            ),
+        },
+        10: {
+            "standing": (
+                "/subject-10/return_crate-35",
+                0,
+                3,
+            ),
+            "moving": (
+                "/subject-10-moving/return_crate-45",
+                0,
+                3,
+            ),
+        },
+    },
+}
+data["pass with crate"] = data["approach with crate"]
+
+if True:
+    topics = ["/camera/color/image_raw"]
+else:
+    topics = ["/human_actions"]
+
+behaviour_bank = {}
+for mode in ROBOT_MODES:
+    behaviour_bank[mode] = {}
+
+for action in data.keys():
+    for mode in ROBOT_MODES:
+        filename, start, duration = data[action][PICKER_ID][mode]
+        behaviour_bank[mode][action] = {
+            "start": start,
+            "duration": duration,
+            "filename": filename,
+            "topics": topics
+        }
+
+
+def do_pick_berries(self):
+    self.picker_positions[TARGET_PICKER][2] = 1 * pi
+    if not self.play_rosbags:
+        msg = Action()
+        msg.header.stamp = rospy.get_rostime()
+        msg.action = "picking berries"
+        msg.person = TARGET_PICKER
+        sleep(1)
+        self.human_action_pub.publish(msg)
+        sleep(2)
+    return True
+
+
+def do_leave_robot(self):
+    if self.picker_positions[TARGET_PICKER][0] < INITIAL_PICKER_POSITION[0]:
+        self.picker_positions[TARGET_PICKER][0] += X_DISTANCE
+        self.picker_positions[TARGET_PICKER][1] += Y_DISTANCE
+        self.picker_positions[TARGET_PICKER][2] = 0 * pi
+        return False
+    else:
+        # self.counter = 0
+        return True
+
+
+def do_pass_robot(self):
+    if (self.counter < EVADE_COUNTS):
+        self.picker_positions[TARGET_PICKER][0] -= X_DISTANCE
+        self.picker_positions[TARGET_PICKER][1] -= Y_DISTANCE
+        self.picker_positions[TARGET_PICKER][2] = 2 * pi
+        self.counter += 1
+        # self.wait = 0
+        return False
+    else:
+        return True
+
+
+def do_call_robot(self):
+    self.picker_positions[TARGET_PICKER][2] = 2 * pi
+    meta_start_wait(self)
+    if not self.play_rosbags:
+        msg = Action()
+        msg.header.stamp = rospy.get_rostime()
+        msg.action = "calling"
+        msg.person = TARGET_PICKER
+        sleep(1)
+        self.human_action_pub.publish(msg)
+        sleep(1)
+    return True
+
+
+def do_call_robot_simple(self):
+    meta_start_wait(self)
+    msg = Action()
+    msg.header.stamp = rospy.get_rostime()
+    msg.action = "calling"
+    msg.person = TARGET_PICKER
+    self.human_action_pub.publish(msg)
+    return True
+
+
+def meta_start_wait(self):
+    if not self.started_waiting_at:
+        self.started_waiting_at = rospy.get_time()
+        return True
+    else:
+        return False
+
+
+def meta_end_wait(self):
+    if self.started_waiting_at:
+        time = rospy.get_time()
+        wait_time = time - self.started_waiting_at
+        if wait_time > 0:
+            self.db.add_person_wait_entry(time, self.picker_positions[TARGET_PICKER][0], self.picker_positions[TARGET_PICKER][1], self.picker_positions[TARGET_PICKER][2],
+                                          self.behaviour, wait_time)
+        else:
+            rospy.logerr("PMO: Wait time is zero")
+        self.started_waiting_at = False
+
+
+def do_expect_service(self):
+    self.picker_positions[TARGET_PICKER][2] = 2 * pi
+    meta_start_wait(self)
+    return True
+
+
+def do_wait_for_robot_to_move(self):
+    self.picker_positions[TARGET_PICKER][2] = 2 * pi
+    meta_start_wait(self)
+    if self.robot_movement == "approaching":
+        meta_end_wait(self)
+        return True
+    else:
+        return False
+
+
+def do_wait_for_robot_to_arrive(self):
+    self.picker_positions[TARGET_PICKER][2] = 2 * pi
+    if self.robot_movement == "approaching":
+        meta_end_wait(self)
+    # if self.old_distance <= PICKER_DISTANCE_PREFERENCE:
+    if self.old_distance <= 1 and self.robot_movement == "standing":
+        rospy.loginfo("PMO: Robot has arrived")
+        return True
+    else:
+        return False
+
+
+def do_approach_robot(self):
+    # if self.counter < EXCHANGE_COUNTS:
+    if self.robot_movement == "approaching":
+        meta_end_wait(self)
+    if self.old_distance > PICKER_DISTANCE_PREFERENCE:
+        self.picker_positions[TARGET_PICKER][0] -= X_DISTANCE
+        self.picker_positions[TARGET_PICKER][1] -= Y_DISTANCE
+        self.picker_positions[TARGET_PICKER][2] = 2 * pi
+        # self.counter += 1
+        # self.wait = 0
+        return False
+    else:
+        return True
+
+
+def do_return_crate(self):
+    if type(self.started_returning_crate) == float:
+        if rospy.get_time() - self.started_returning_crate >= EXCHANGE_COST:
+            self.started_returning_crate = True
+            return True
+        else:
+            return False
+    elif self.started_returning_crate:
+        return True
+    else:
+        self.picker_positions[TARGET_PICKER][2] = 2 * pi
+        self.started_returning_crate = rospy.get_time()
+        return False
+
+
+def do_get_crate(self):
+    if type(self.started_getting_crate) == float:
+        if rospy.get_time() - self.started_getting_crate >= GIVE_COST:
+            self.started_getting_crate = True
+            return True
+        else:
+            return False
+    elif self.started_getting_crate:
+        return True
+    else:
+        self.picker_positions[TARGET_PICKER][2] = 2 * pi
+        self.started_getting_crate = rospy.get_time()
+        return False
+
+
+def do_reset(self):
+    for picker in PICKERS:
+        picker_id = int(picker[-2:])
+        self.picker_positions[picker] = [
+            20.0397663116
+            + (picker_id-1) * MEAN_WAYPOINT_DISTANCE/2 * cos(ANGLE),
+            -13.0631952286
+            + (picker_id-1) * MEAN_WAYPOINT_DISTANCE/2 * -sin(ANGLE),
+            INITIAL_PICKER_ORIENTATION
+        ]
+    for count in [1, 2, 3]:
+        self.send_position_messages()
+        rospy.sleep(0.1)
+    self.picker_positions[TARGET_PICKER][0] = INITIAL_PICKER_POSITION[0]
+    self.picker_positions[TARGET_PICKER][1] = INITIAL_PICKER_POSITION[1]
+    self.picker_positions[TARGET_PICKER][2] = INITIAL_PICKER_ORIENTATION
+    return True
+
+
+BEHAVIOURS = {"pick berries": do_pick_berries,
+              "leave with crate": do_leave_robot,
+              "get crate": do_get_crate,
+              "approach with crate": do_approach_robot,
+              "approach without crate": do_approach_robot,
+              "pass with crate": do_pass_robot,
+              "call robot": do_call_robot,
+              "call robot simple": do_call_robot_simple,
+              "return crate": do_return_crate,
+              "get crate": do_get_crate,
+              "wait for robot to move": do_wait_for_robot_to_move,
+              "wait for robot to arrive": do_wait_for_robot_to_arrive,
+              "expect service": do_expect_service,
+              "reset": do_reset}
+
+
+def get_rosbag_from_file(filename, mode="r"):
+    try:
+        bag = rosbag.Bag(filename, mode)
+        return bag
+    except Exception as e:
+        rospy.logerr(
+         "Failed to get rosbag topics info from file {:} with exception: '{:}'"
+         .format(filename, e)
+        )
+        return None
+
+
+class Player(Thread):
+    def __init__(self, running_bags, filename, topics=[], start_delay=None, duration=None):
+        super(Player, self).__init__()
+        self.running_bags = running_bags
+        loading_start = rospy.get_time()
+        self.rate = rospy.Rate(ROSBAG_FREQUENCY)
+        self.closing = False
+        self.filename = filename
+        self.bag = get_rosbag_from_file(filename)
+        start_delay = 0
+        bag_start_time = rospy.Time.from_sec(self.bag.get_start_time())
+        bag_end_time = rospy.Time.from_sec(self.bag.get_end_time())
+        start_time = (
+            bag_start_time if start_delay is None else bag_start_time + rospy.Duration(start_delay))
+        end_time = (
+            bag_end_time if duration is None else start_time + rospy.Duration(duration))
+        self.msgs = self.bag.read_messages(
+            topics=topics, start_time=start_time, end_time=end_time)
+        self.pubs = {}
+        rospy.logdebug("PMO: Loading rosbag '{}' took {:.2f}".format(
+            self.filename, rospy.get_time() - loading_start))
+
+    def run(self):
+        try:
+            self.running_bags.append(self)
+            if not self.closing:
+                rospy.logdebug(
+                    "PMO: Playing rosbag '{}'".format(self.filename))
+                count_sent = 0
+                count_encountered = 0
+                for topic, msg, timestamp in self.msgs:
+                    if self.closing:
+                        break
+                    count_encountered += 1
+                    if topic not in self.pubs:
+                        self.pubs[topic] = rospy.Publisher(
+                            topic, msg.__class__, queue_size=10
+                        )
+                        rospy.sleep(0.05)
+                    count_sent += 1
+                    self.pubs[topic].publish(msg)
+                    self.rate.sleep()
+                rospy.logdebug("PMO: Stopped playing rosbag {}. Sent {} of {} messages.".format(
+                    self.filename, count_sent, count_encountered))
+        except AttributeError:
+            rospy.logwarn("PMO: Attribute error")
+        except rospy.ROSInterruptException:
+            rospy.logwarn("PMO: Remote interrupt")
+        except rospy.ROSException:
+            rospy.logwarn("PMO: trying to publish to closed topic")
+        finally:
+            self.close()
+            # rospy.core.signal_shutdown('remote interrupt')
+
+    def close(self):
+        if not self.closing:
+            self.running_bags.remove(self)
+            self.closing = True
+            self.bag.close()
+
+    def terminate(self):
+        # self.bag.close()
+        # rospy.sleep(1)
+        # if self.bag.poll() is None:
+        #     self.bag.kill()
+        try:
+            self.close()
+        except IOError:
+            pass
+
+
+def convert_bags(config):
+    out_paths = []
+    for key, behaviour in config.behaviours.items():
+        if behaviour["type"] == "rosbag":
+            for topic in behaviour["topics"]:
+                msgs = []
+                start_time = behaviour["start"]
+                end_time = start_time + behaviour["duration"]
+                with rosbag.Bag(behaviour["filename"], "r") as in_bag:
+                    bag_time = in_bag.get_start_time()
+                    for topic, msg, t in in_bag.read_messages(topics=[topic]):
+                        secs = t.to_sec() - bag_time - start_time
+                        if secs >= 0 and secs <= end_time - start_time:
+                            msg.header.stamp = rospy.Time.from_sec(secs)
+                            msgs.append(msg)
+                msgs = sorted(msgs, key=lambda msg: msg.header.seq)
+                try:
+                    os.mkdir(behaviour["filename"][:-4])
+                except Exception:
+                    pass
+                out_path = os.path.join(
+                    behaviour["filename"][:-4],
+                    "{:}-{:}.bag".format(behaviour["label"], start_time),
+                )
+                behaviour["filename"] = out_path
+                behaviour["start"] = 0
+                out_paths.append(out_path)
+                with rosbag.Bag(out_path, "w") as out_bag:
+                    for msg in msgs:
+                        out_bag.write(topic, msg, msg.header.stamp)
+            return out_paths
+
+
+class PickerSimulator(object):
+
+    def __init__(self):
+        self.rate = rospy.Rate(PICKER_UPDATE_FREQUENCY)
+        self.shutting_down = False
+        self.current_behaviour_finished = False
+        self.robot_speed = float("nan")
+        self.robot_is_moving = False
+        self.robot_hasnt_stopped_yet = True
+        rospy.loginfo("PMO: Starting picker simulator for picker: {}"
+                      .format(PICKER_ID))
+        self.publisher = rospy.Publisher('/hedge_pos_a',
+                                         hedge_pos_a, queue_size=10)
+        self.human_action_pub = rospy.Publisher('{}/human_actions'.format(NS),
+                                                Action, queue_size=10)
+        self.behaviours = rospy.get_param("{}/behaviours".format(NS))
+        # self.behaviour_times = sorted(self.behaviours.keys())
+        self.behaviour = do_reset
+        self.old_behaviour = do_reset
+        self.old_distance = float("inf")
+        self.counter = 0
+        # self.initial_x = 17.561 #20.639 # 17.061
+        # self.initial_y = 4.609 #4.628 # 4.609
+        self.picker_positions = {}
+        do_reset(self)
+        self.wait = 0
+        self.robot_x = None
+        self.robot_y = None
+        self.robot_movement = "none"
+        self.started_waiting_at = False
+        self.started_returning_crate = False
+        self.started_getting_crate = False
+        self.return1 = False
+        self.play_rosbags = True
+        self.play_images = USE_ACTION_RECOGNITION
+        if self.play_images:
+            self.rosbag_path = ("/data/out-video2", ".bag")
+        else:
+            self.rosbag_path = ("/data/out-new", "-joints.bag")
+        self.running_bags = []
+        self.db = db
+        self.last_clock = rospy.get_time()
+        self.wait_time = rospy.get_param("{}/start_time".format(NS), None)
+        self.robot_pose_sub = rospy.Subscriber(
+            "{}/robot_pose".format(NS.rstrip("/hri")),
+            Pose,
+            self.robot_position_coordinate_callback,
+        )
+        while self.wait_time is None:
+            rospy.sleep(0.25)
+            self.wait_time = rospy.get_param("{}/start_time".format(NS), None)
+        rospy.loginfo("PMO: Experiment starting at: {}".format(self.wait_time))
+
+    def robot_position_coordinate_callback(self, pose):
+        self.robot_x = pose.position.x
+        self.robot_y = pose.position.y
+        self.robot_timestamp = rospy.get_time()
+        try:
+            dx = self.robot_x - self.old_robot_x
+            dy = self.robot_y - self.old_robot_y
+            dt = self.robot_timestamp - self.old_robot_timestamp
+            dxs = dx * dx
+            dys = dy * dy
+            self.robot_speed = sqrt(dxs + dys) / dt
+        except Exception:
+            self.robot_speed = float("nan")
+        finally:
+            self.old_robot_timestamp = self.robot_timestamp
+            self.old_robot_x = self.robot_x
+            self.old_robot_y = self.robot_y
+
+    def get_distance_to_robot(self):
+        dx = self.picker_positions[TARGET_PICKER][0] - self.robot_x
+        dy = self.picker_positions[TARGET_PICKER][1] - self.robot_y
+        dxs = dx * dx
+        dys = dy * dy
+        if dxs > dys:
+            distance = sqrt(dxs + dys) - 0.5 * (PICKER_LENGTH + ROBOT_LENGTH)
+        else:
+            distance = sqrt(dxs + dys) - 0.5 * (PICKER_WIDTH + ROBOT_WIDTH)
+        return distance
+
+    # def get_next_behaviour(self):
+    #     return self.behaviours[self.behaviour_times.pop(0)]
+
+    # def get_next_behaviour_time(self):
+    #     try:
+    #         return self.behaviour_times[0]
+    #     except IndexError:
+    #         return float('inf')
+
+    def send_position_messages(self):
+        for picker, position in self.picker_positions.items():
+            msg = hedge_pos_a()
+            msg.address = int(picker[-2:])
+            msg.x_m = position[0]
+            msg.y_m = position[1]
+            msg.z_m = position[2]
+            if ADD_MOVEMENT_NOISE and picker == TARGET_PICKER:
+                msg.x_m += np.random.normal(0, MOVEMENT_NOISE[0])
+                msg.y_m += np.random.normal(0, MOVEMENT_NOISE[1])
+            self.publisher.publish(msg)
+
+    def robot_mode(self):
+        if self.robot_movement == "standing":
+            return "standing"
+        else:
+            return "moving"
+
+    def update_robot_movement(self):
+        if self.robot_x:
+            timestamp = rospy.get_time()
+            distance = self.get_distance_to_robot()
+            diff = distance - self.old_distance
+            if self.robot_movement == "none":
+                self.robot_movement = "standing"
+                # rospy.loginfo("PMO: Robot is standing")
+            elif self.robot_speed < 0.01 and distance < 1 and self.robot_hasnt_stopped_yet and self.robot_is_moving:
+                self.db.update_meet_entry(
+                    timestamp, self.robot_x, self.robot_y, distance)
+                self.robot_movement = "standing"
+                # rospy.loginfo("PMO: Robot is standing")
+                self.robot_hasnt_stopped_yet = False
+            else:
+                if self.robot_speed > 0.1:
+                    self.robot_is_moving = True
+                if diff < -0.01:
+                    self.robot_movement = "approaching"
+                    # rospy.loginfo("PMO: Robot is approaching")
+                elif diff > 0.01:
+                    self.robot_movement = "leaving"
+                    # rospy.loginfo("PMO: Robot is leaving")
+            # rospy.logwarn("PMO: Distance to robot: {}".format(distance))
+            self.old_distance = distance
+
+    def loop(self):
+        if not self.shutting_down:
+            self.update_robot_movement()
+            now = rospy.get_time()
+            if self.current_behaviour_finished:
+                try:
+                    if now >= self.wait_time and (not self.running_bags or self.behaviours[0][0] in ["wait for robot to move", "expect service", "wait for robot to arrive"]):
+                        behaviour_label, self.wait_time = self.behaviours.pop(
+                            0)
+                        self.wait_time += now
+                        self.switch_behaviour(behaviour_label)
+                        behaviour = \
+                            behaviour_bank[self.robot_mode()][behaviour_label]
+                        if self.play_rosbags and behaviour["filename"]:
+                            player = Player(
+                                    self.running_bags,
+                                    (self.rosbag_path[0]
+                                     + behaviour["filename"]
+                                     + self.rosbag_path[1]),
+                                    topics=behaviour["topics"],
+                                    start_delay=behaviour["start"],
+                                    duration=behaviour["duration"])
+                            player.start()
+                except KeyError:
+                    pass
+                    rospy.logdebug(
+                        "PMO: Couldn't find rosbag for behaviour: '{:}'"
+                        .format(behaviour_label))
+                except IndexError:
+                    rospy.loginfo("PMO: End of picker behavior reached")
+                    self.shutdown()
+                except Exception as err:
+                    rospy.logerr("PMO: Unknown Exception: {}".format(err))
+            else:
+                self.current_behaviour_finished = self.behaviour(self)
+            self.send_position_messages()
+            # rospy.sleep(0.01)
+
+    def switch_behaviour(self, behaviour):
+        if behaviour in BEHAVIOURS:
+            self.counter = 0
+            db.add_person_behaviour_entry(
+                rospy.get_time(), self.picker_positions[TARGET_PICKER][0], self.picker_positions[TARGET_PICKER][1], self.picker_positions[TARGET_PICKER][2], behaviour)
+            self.old_behaviour = self.behaviour
+            self.behaviour = BEHAVIOURS.get(
+                behaviour, lambda: rospy.logerr("PSI: Unknown behaviour"))
+            rospy.loginfo("PMO: Switched picker behaviour to '{:}'.".format(
+                           behaviour))
+            self.current_behaviour_finished = False
+            # rospy.loginfo(("PMO: Switched to behaviour '{:}',"
+            #                " next behaviour is '{:}' at {:.2f}").format(
+            #                behaviour, self.behaviours[0][0], self.wait_time))
+        else:
+            rospy.logwarn(
+                "PMO: Received unknown behaviour '{:}', ignoring input"
+                .format(behaviour))
+
+    def spin(self):
+        """
+        Blocks until ROS node is shutdown. Yields activity to other threads.
+        @raise ROSInitException: if node is not in a properly initialized state
+        """
+
+        if not rospy.core.is_initialized():
+            raise rospy.exceptions.ROSInitException(
+                "client code must call rospy.init_node() first")
+            rospy.logdebug(
+                "node[%s, %s] entering spin(), pid[%s]",
+                rospy.core.get_caller_id(),
+                rospy.core.get_node_uri(), os.getpid())
+        try:
+            while not rospy.core.is_shutdown():
+                self.loop()
+                self.rate.sleep()
+        except KeyboardInterrupt:
+            rospy.logwarn("PMO: Keyboard interrupt")
+        except rospy.ROSInterruptException:
+            rospy.logwarn("PMO: Remote interrupt")
+        except Exception as err:
+            rospy.logwarn("PMO: Unknown exception")
+            rospy.logerr(err)
+        finally:
+            self.shutdown()
+
+    def terminate_bags(self):
+        for player in self.running_bags:
+            player.terminate()
+            player.join()
+        self.running_bags = []
+        # for bag in self.bags.values():
+        #     bag.close()
+
+    def shutdown(self):
+        rospy.loginfo("PMO: Shutting down")
+        self.shutting_down = True
+        self.robot_pose_sub.unregister()
+        if self.play_rosbags:
+            self.terminate_bags()
+
+
+if __name__ == '__main__':
+    rospy.init_node("picker_mover")
+    # doesn't work before init_node
+
+    rospy.myargv(argv=sys.argv)
+    while (rospy.get_time() == 0):
+        sleep(0.01)
+    rospy.loginfo("PMO: Picker Mover started")
+    pm = PickerSimulator()
+    while rospy.get_time() < pm.wait_time:
+        rospy.sleep(0.25)
+    pm.spin()
