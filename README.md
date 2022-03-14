@@ -9,12 +9,12 @@ To create the rasberry docker container, you need to place
 in `docker/rasberry/. You can get them from NVIDIA.
 
  ## Running CAIRA in Simulation
- 0.1 Copy the contents of the `ros_node` directory into `/home/rasberry/catkin_ws/src/`
- 0.2 Build the catkin workspace `cd /home/rasberry/catking_ws;catkin build`
- 1. Start the simulator `tmule -c /home/rasberry/catking_ws/src/RASberry/rasberry_bringup/tmule/rasberry-multisim.yaml`
- 2. Enter the simutation environment `tmule a`
- 3. Switch to window 0 `CTRL+B 0`
- 4. Start the experiment launch file `roslaunch rasberry_hri experiment.launch`
+1 Copy the contents of the `ros_node` directory into `/home/rasberry/catkin_ws/src/`
+2 Build the catkin workspace `cd /home/rasberry/catking_ws;catkin build`
+3. Start the simulator `tmule -c /home/rasberry/catking_ws/src/RASberry/rasberry_bringup/tmule/rasberry-multisim.yaml`
+4. Enter the simutation environment `tmule a`
+5. Switch to window 0 `CTRL+B 0`
+6. Start the experiment launch file `roslaunch rasberry_hri experiment.launch`
 
 
  ## Running CAIRA on a robot
