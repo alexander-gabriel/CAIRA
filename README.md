@@ -5,7 +5,8 @@ The Context-Aware Intention Recognition Agent
 To create the rasberry docker container, you need to place
  - libcudnn7_7.4.2.24-1+cuda9.0_amd64.deb
  - libcudnn7-dev_7.4.2.24-1+cuda9.0_amd64.deb
- in `docker/rasberry/. You can get them from NVIDIA.
+ 
+in `docker/rasberry/. You can get them from NVIDIA.
 
  ## Running CAIRA in Simulation
  0.1 Copy the contents of the `ros_node` directory into `/home/rasberry/catkin_ws/src/`
